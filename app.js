@@ -216,34 +216,87 @@ function rateCard(card, rate){
 }
 
 function renderQuiz(){
-  $('#view').innerHTML = `<section class="panel"><h2>Quiz nhanh</h2><p class="muted">Chọn nghĩa đúng. Sai sẽ được ghi vào “Từ yếu”.</p><div id="quizArea"></div></section>`;
+  $('#view').innerHTML = `
+    <section class="panel">
+      <h2>Quiz nhanh</h2>
+      <p class="muted">Kiểu active recall: chỉ hiện câu hỏi. Cách đọc, Hán Việt và đáp án chỉ hiện sau khi bạn chọn.</p>
+      <div class="toolbar">
+        <label class="small">Kiểu câu hỏi
+          <select id="quizMode">
+            <option value="jp_to_meaning">Nhìn Nhật → chọn nghĩa</option>
+            <option value="meaning_to_jp">Nhìn nghĩa → chọn từ Nhật</option>
+            <option value="jp_to_reading">Nhìn Kanji → chọn cách đọc</option>
+            <option value="reading_to_jp">Nhìn cách đọc → chọn từ Nhật</option>
+          </select>
+        </label>
+        <button id="newQuiz" class="primary">Câu mới</button>
+      </div>
+      <div id="quizArea"></div>
+    </section>`;
+  $('#quizMode').onchange=nextQuiz;
+  $('#newQuiz').onclick=nextQuiz;
   nextQuiz();
 }
 function nextQuiz(){
-  const deck=filteredCards().filter(c=>c.meaning_vi && c.title).slice();
-  if(deck.length<4){ $('#quizArea').innerHTML='<div class="warning">Cần ít nhất 4 thẻ có nghĩa để tạo quiz.</div>'; return; }
+  const mode=$('#quizMode')?.value || 'jp_to_meaning';
+  const deck=filteredCards().filter(c=>quizQuestion(c, mode) && quizAnswer(c, mode)).slice();
+  if(deck.length<4){ $('#quizArea').innerHTML='<div class="warning">Cần ít nhất 4 thẻ phù hợp để tạo quiz. Hãy đổi bộ lọc hoặc đổi kiểu câu hỏi.</div>'; return; }
   const card=shuffle(deck)[0];
-  const options=shuffle([card, ...shuffle(deck.filter(c=>c.id!==card.id)).slice(0,3)]);
-  app.quiz={card, options, answered:false};
+  const answer=quizAnswer(card, mode);
+  const distractors=shuffle(deck.filter(c=>c.id!==card.id).map(c=>quizAnswer(c, mode)).filter(v=>v && v!==answer));
+  const options=shuffle([answer, ...Array.from(new Set(distractors)).slice(0,3)]);
+  app.quiz={card, mode, answer, options, answered:false};
   $('#quizArea').innerHTML=`
     <div class="study-card">
       <div class="card-meta">${metaPills(card)}</div>
-      <div class="front">${frontHtml(card)}</div>
-      <div>${options.map(o=>`<button class="quiz-option" data-id="${o.id}">${esc(o.meaning_vi||o.hanviet||o.reading||'')}</button>`).join('')}</div>
-      <div class="toolbar"><button id="nextQuiz">Câu tiếp theo</button></div>
+      <div class="front quiz-front">${quizQuestionHtml(card, mode)}</div>
+      <div class="quiz-options">${options.map(o=>`<button class="quiz-option" data-opt="${esc(o)}">${esc(o)}</button>`).join('')}</div>
+      <p class="muted" id="quizFeedback">Chọn 1 đáp án trước. App sẽ không hiện đáp án trước khi chọn.</p>
+      <div class="toolbar"><button id="nextQuiz" disabled>Câu tiếp theo</button></div>
     </div>`;
   $all('.quiz-option').forEach(btn=>btn.onclick=()=>answerQuiz(btn));
   $('#nextQuiz').onclick=nextQuiz;
 }
+function quizQuestion(c, mode){
+  if(mode==='meaning_to_jp') return c.meaning_vi;
+  if(mode==='jp_to_reading') return c.title;
+  if(mode==='reading_to_jp') return c.reading;
+  return c.title;
+}
+function quizAnswer(c, mode){
+  if(mode==='meaning_to_jp') return c.title;
+  if(mode==='jp_to_reading') return c.reading;
+  if(mode==='reading_to_jp') return c.title;
+  return c.meaning_vi;
+}
+function quizQuestionHtml(c, mode){
+  const q=quizQuestion(c, mode) || '—';
+  const label={
+    jp_to_meaning:'Nghĩa là gì?',
+    meaning_to_jp:'Từ tiếng Nhật là gì?',
+    jp_to_reading:'Cách đọc là gì?',
+    reading_to_jp:'Kanji/từ đúng là gì?'
+  }[mode] || 'Chọn đáp án đúng';
+  if(mode==='meaning_to_jp') return `<div class="meaning quiz-question">${esc(q)}</div><div class="muted">${esc(label)}</div>`;
+  if(mode==='reading_to_jp') return `<div class="reading quiz-question">${esc(q)}</div><div class="muted">${esc(label)}</div>`;
+  return `<div class="jp quiz-question">${esc(q)}</div><div class="muted">${esc(label)}</div>`;
+}
 function answerQuiz(btn){
   if(app.quiz.answered) return;
   app.quiz.answered=true;
-  const ok=btn.dataset.id===app.quiz.card.id;
+  const selected=btn.dataset.opt;
+  const ok=selected===app.quiz.answer;
   $all('.quiz-option').forEach(b=>{
-    if(b.dataset.id===app.quiz.card.id) b.classList.add('correct');
+    b.disabled=true;
+    if(b.dataset.opt===app.quiz.answer) b.classList.add('correct');
     else if(b===btn) b.classList.add('wrong');
   });
-  rateSilently(app.quiz.card, ok?'good':'again');
+  const c=app.quiz.card;
+  $('#quizFeedback').innerHTML = ok
+    ? `Đúng. <b>${esc(c.title)}</b>${c.reading?`（${esc(c.reading)}）`:''}${c.hanviet?` · ${esc(c.hanviet)}`:''}`
+    : `Chưa đúng. Đáp án: <b>${esc(app.quiz.answer)}</b><br><span class="small">${esc(c.title)}${c.reading?`（${esc(c.reading)}）`:''}${c.hanviet?` · ${esc(c.hanviet)}`:''}${c.meaning_vi?` · ${esc(c.meaning_vi)}`:''}</span>`;
+  $('#nextQuiz').disabled=false;
+  rateSilently(c, ok?'good':'again');
 }
 function rateSilently(card, rate){
   const p=app.state.progress[card.id] || {ease:2.5, interval:0, reviewCount:0, correct:0, wrong:0};
