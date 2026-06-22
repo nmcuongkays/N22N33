@@ -15,18 +15,37 @@ const app = {
 
 function loadState(){
   try{
-    return JSON.parse(localStorage.getItem(LS_KEY)) || defaultState();
+    const saved = JSON.parse(localStorage.getItem(LS_KEY));
+    return migrateState(saved || defaultState());
   }catch(e){ return defaultState(); }
 }
 function defaultState(){
   return {
-    version: 1,
-    settings: { newPerDay: 30, driveDelay: 1200, showRaw: true },
+    version: 2,
+    settings: {
+      newPerDay: 30,
+      sessionSize: 25,
+      sessionMode: 'review',
+      frontMode: 'jp_to_vi',
+      driveDelay: 1200,
+      showRaw: true
+    },
     progress: {},
     notes: {},
     history: [],
     createdAt: new Date().toISOString(),
     theme: 'light'
+  };
+}
+function migrateState(state){
+  const base = defaultState();
+  return {
+    ...base,
+    ...state,
+    settings: { ...base.settings, ...(state.settings || {}) },
+    progress: state.progress || {},
+    notes: state.notes || {},
+    history: state.history || []
   };
 }
 function saveState(){ localStorage.setItem(LS_KEY, JSON.stringify(app.state)); }
@@ -63,6 +82,21 @@ function bindShell(){
   $('#levelFilter').addEventListener('change', e=>{ app.filters.level=e.target.value; app.page=1; render(); });
   $('#kindFilter').addEventListener('change', e=>{ app.filters.kind=e.target.value; app.page=1; render(); });
   $('#searchBox').addEventListener('input', e=>{ app.filters.q=e.target.value.trim().toLowerCase(); app.page=1; render(); });
+
+  const settings = app.state.settings;
+  if($('#sessionMode')) $('#sessionMode').value = settings.sessionMode || 'review';
+  if($('#sessionSize')) $('#sessionSize').value = settings.sessionSize || 25;
+  if($('#frontMode')) $('#frontMode').value = settings.frontMode || 'jp_to_vi';
+  $('#sessionMode')?.addEventListener('change', e=>{ settings.sessionMode=e.target.value; saveState(); updateSidebarGoal(); });
+  $('#sessionSize')?.addEventListener('change', e=>{ settings.sessionSize=Math.max(5, Math.min(120, Number(e.target.value)||25)); e.target.value=settings.sessionSize; saveState(); updateSidebarGoal(); });
+  $('#frontMode')?.addEventListener('change', e=>{ settings.frontMode=e.target.value; saveState(); if(app.view==='study') renderStudyCard(); });
+  $('#createSessionBtn')?.addEventListener('click', () => {
+    app.view='study'; activateNav('study'); renderStudy(); startStudyFromSetup();
+  });
+  $('#startGoalSession')?.addEventListener('click', () => {
+    app.view='study'; activateNav('study'); renderStudy(); startTodayGoalSession();
+  });
+
   $('#themeBtn').addEventListener('click', () => {
     app.state.theme = (app.state.theme === 'dark') ? 'light' : 'dark';
     document.documentElement.dataset.theme = app.state.theme;
@@ -88,29 +122,76 @@ function countStats(cards=app.cards){
   const weak=cards.filter(c => (getP(c).wrong||0) >= 2).length;
   return {total, learned, due, fresh, weak};
 }
+function dayStartTs(d=new Date()){ const x=new Date(d); x.setHours(0,0,0,0); return x.getTime(); }
+function todayStats(cards=filteredCards()){
+  const ids = new Set(cards.map(c=>c.id));
+  const start = dayStartTs();
+  const target = Number(app.state.settings.newPerDay) || 30;
+  const newToday = cards.filter(c => (getP(c).firstLearnedAt || 0) >= start).length;
+  const eventsToday = (app.state.history || []).filter(h => (h.at || 0) >= start && ids.has(h.id));
+  const reviewedToday = new Set(eventsToday.map(h=>h.id)).size;
+  const correctToday = eventsToday.filter(h => h.rate === 'good' || h.rate === 'easy').length;
+  const wrongToday = eventsToday.filter(h => h.rate === 'again' || h.rate === 'hard').length;
+  const dueNow = cards.filter(isDue).length;
+  const remainingNew = Math.max(0, target - newToday);
+  return { target, newToday, reviewedToday, correctToday, wrongToday, dueNow, remainingNew };
+}
+function progressPct(done, total){ return Math.max(0, Math.min(100, total ? Math.round((done / total) * 100) : 0)); }
+function todayGoalHtml(stats=todayStats()){
+  const pct = progressPct(stats.newToday, stats.target);
+  return `<div class="goal-box">
+    <div class="goal-line"><b>${stats.newToday}/${stats.target}</b> thẻ mới hôm nay</div>
+    <div class="progressbar"><span style="width:${pct}%"></span></div>
+    <div class="small muted">Còn ${stats.remainingNew} thẻ mới · Đến hạn ôn: ${stats.dueNow} · Đã chạm hôm nay: ${stats.reviewedToday}</div>
+  </div>`;
+}
+function updateSidebarGoal(){
+  const box = $('#todayGoalBox');
+  if(!box || !app.cards.length) return;
+  const stats = todayStats();
+  box.innerHTML = todayGoalHtml(stats);
+  const btn = $('#startGoalSession');
+  if(btn){
+    btn.textContent = stats.remainingNew > 0 ? `Học tiếp ${Math.min(stats.remainingNew, Number(app.state.settings.sessionSize)||25)} thẻ mới` : 'Mục tiêu đã xong';
+    btn.disabled = stats.remainingNew <= 0;
+  }
+  const hint = $('#sessionHint');
+  if(hint){
+    const f = countStats(filteredCards());
+    hint.textContent = `Bộ lọc hiện có ${f.total} thẻ · Review đến hạn ${f.due} · Thẻ mới ${f.fresh}.`;
+  }
+}
 
 function render(){
   const views = {dashboard:renderDashboard, study:renderStudy, quiz:renderQuiz, drive:renderDrive, library:renderLibrary, mistakes:renderMistakes, settings:renderSettings};
   (views[app.view] || renderDashboard)();
+  updateSidebarGoal();
 }
 
 function renderDashboard(){
   const all=countStats(app.cards), f=countStats(filteredCards());
+  const t=todayStats();
   const due=filteredCards().filter(isDue).slice(0,8);
   const nextNew=filteredCards().filter(isNew).slice(0,8);
   $('#view').innerHTML = `
     <section class="panel">
       <h2>Hôm nay nên học gì?</h2>
-      <p class="muted">Nguyên tắc: review trước, học mới sau. Dữ liệu đang lọc: <b>${f.total}</b> thẻ.</p>
+      <p class="muted">Nguyên tắc: <b>review trước, học mới sau</b>. Dữ liệu đang lọc: <b>${f.total}</b> thẻ.</p>
       <div class="grid stats">
         ${stat('Tổng thẻ', all.total)}
         ${stat('Đã học', all.learned)}
         ${stat('Đến hạn ôn', all.due)}
         ${stat('Từ yếu', all.weak)}
       </div>
+      <div class="goal-panel">
+        <h3>Mục tiêu hôm nay</h3>
+        ${todayGoalHtml(t)}
+        <p class="muted small">Mục tiêu chỉ tính <b>thẻ mới</b> học lần đầu trong ngày. Review không trừ vào mục tiêu mới, nhưng vẫn nên làm trước.</p>
+      </div>
       <div class="toolbar">
         <button class="primary" id="startReview">Review ngay (${f.due})</button>
-        <button id="startNew">Học mới ${app.state.settings.newPerDay} thẻ</button>
+        <button id="startNew">Học mới ${Math.min(t.remainingNew || app.state.settings.newPerDay, app.state.settings.sessionSize || 25)} thẻ</button>
+        <button id="startSetup">Tạo phiên theo thiết lập</button>
         <button id="goDrive">Mở Drive Mode</button>
       </div>
     </section>
@@ -119,8 +200,9 @@ function renderDashboard(){
       <section class="panel"><h2>Thẻ mới gợi ý</h2>${miniList(nextNew)}</section>
     </div>
   `;
-  $('#startReview').onclick=()=>{ app.view='study'; activateNav('study'); startStudy('review'); };
-  $('#startNew').onclick=()=>{ app.view='study'; activateNav('study'); startStudy('new'); };
+  $('#startReview').onclick=()=>{ app.view='study'; activateNav('study'); renderStudy(); startStudy('review', {limit: app.state.settings.sessionSize || 25}); };
+  $('#startNew').onclick=()=>{ app.view='study'; activateNav('study'); renderStudy(); startTodayGoalSession(); };
+  $('#startSetup').onclick=()=>{ app.view='study'; activateNav('study'); renderStudy(); startStudyFromSetup(); };
   $('#goDrive').onclick=()=>{ app.view='drive'; activateNav('drive'); renderDrive(); };
 }
 function stat(label,num){ return `<div class="stat"><div class="num">${num}</div><div class="label">${label}</div></div>`; }
@@ -135,25 +217,45 @@ function renderStudy(){
     <section class="panel">
       <h2>Học / Review</h2>
       <div class="toolbar">
-        <button id="modeReview" class="primary">Review đến hạn</button>
+        <button id="modeSetup" class="primary">Tạo phiên theo thiết lập</button>
+        <button id="modeReview">Review đến hạn</button>
         <button id="modeNew">Học thẻ mới</button>
         <button id="modeAll">Luyện tất cả thẻ lọc</button>
       </div>
       <div id="studyArea"></div>
     </section>`;
-  $('#modeReview').onclick=()=>startStudy('review');
-  $('#modeNew').onclick=()=>startStudy('new');
-  $('#modeAll').onclick=()=>startStudy('all');
-  startStudy(app.currentStudy?.mode || 'review');
+  $('#modeSetup').onclick=()=>startStudyFromSetup();
+  $('#modeReview').onclick=()=>startStudy('review', {limit: app.state.settings.sessionSize || 25});
+  $('#modeNew').onclick=()=>startTodayGoalSession();
+  $('#modeAll').onclick=()=>startStudy('all', {limit: app.state.settings.sessionSize || 25});
+  startStudy(app.currentStudy?.mode || app.state.settings.sessionMode || 'review', {limit: app.state.settings.sessionSize || 25});
 }
-function startStudy(mode){
+function startStudyFromSetup(){
+  const s = app.state.settings;
+  startStudy(s.sessionMode || 'review', {limit: Number(s.sessionSize) || 25});
+}
+function startTodayGoalSession(){
+  const stats = todayStats();
+  const limit = Math.min(stats.remainingNew || (app.state.settings.sessionSize || 25), Number(app.state.settings.sessionSize) || 25);
+  startStudy('new', {limit});
+}
+function startStudy(mode, opts={}){
   if(mode === 'single' && app.currentStudy?.deck?.length){ renderStudyCard(); return; }
-  let deck = filteredCards();
-  if(mode==='review') deck = deck.filter(isDue);
-  if(mode==='new') deck = deck.filter(isNew).slice(0, app.state.settings.newPerDay || 30);
-  if(mode==='all') deck = shuffle(deck).slice(0, 100);
+  const limit = Number(opts.limit || app.state.settings.sessionSize || 25);
+  let base = filteredCards();
+  let deck = base;
+  if(mode==='review') deck = base.filter(isDue).slice(0, limit);
+  if(mode==='new') deck = base.filter(isNew).slice(0, limit);
+  if(mode==='mixed'){
+    const due = base.filter(isDue).slice(0, Math.ceil(limit * 0.6));
+    const used = new Set(due.map(c=>c.id));
+    const fresh = base.filter(c=>isNew(c) && !used.has(c.id)).slice(0, limit - due.length);
+    deck = [...due, ...fresh];
+  }
+  if(mode==='all') deck = shuffle(base).slice(0, limit);
   app.currentStudy = { mode, deck, index:0, revealed:false };
   renderStudyCard();
+  updateSidebarGoal();
 }
 function renderStudyCard(){
   const area=$('#studyArea');
@@ -174,19 +276,26 @@ function renderStudyCard(){
 function studyCardHtml(c){
   return `<article class="study-card">
     <div class="card-meta">${metaPills(c)}</div>
-    <div class="front">${frontHtml(c)}</div>
+    <div class="front">${studyFrontHtml(c)}</div>
     <button class="primary reveal">Hiện đáp án</button>
     <div class="back hidden">${backHtml(c)}<textarea class="noteBox" placeholder="Ghi chú cá nhân...">${esc(app.state.notes[c.id]||'')}</textarea></div>
     <div class="rating hidden"><button data-rate="again" class="danger">Again</button><button data-rate="hard">Hard</button><button data-rate="good" class="primary">Good</button><button data-rate="easy" class="success">Easy</button></div>
   </article>`;
 }
 function metaPills(c){ return `<span class="pill">${esc(c.level)}</span><span class="pill">${c.kind==='kanji'?'Kanji':'Từ vựng'}</span><span class="pill">${esc(c.source)}</span><span class="pill">Trang ${c.page}</span><span class="pill">#${c.global_number||c.number}</span>`; }
-function frontHtml(c){
+function fullFrontHtml(c){
   return `<div class="jp">${esc(c.title)}</div>${c.reading?`<div class="reading">${esc(c.reading)}</div>`:''}${c.hanviet?`<div class="hanviet">${esc(c.hanviet)}</div>`:''}`;
+}
+function studyFrontHtml(c){
+  const mode = app.state.settings.frontMode || 'jp_to_vi';
+  if(mode === 'vi_to_jp') return `<div class="meaning quiz-question">${esc(c.meaning_vi || '—')}</div><div class="muted">Hãy nhớ từ tiếng Nhật + cách đọc.</div>`;
+  if(mode === 'reading_to_jp') return `<div class="reading quiz-question">${esc(c.reading || '—')}</div><div class="muted">Hãy nhớ Kanji/từ Nhật + nghĩa.</div>`;
+  if(mode === 'kanji_to_reading') return `<div class="jp quiz-question">${esc(c.title)}</div><div class="muted">Hãy nhớ cách đọc trước khi lật thẻ.</div>`;
+  return `<div class="jp quiz-question">${esc(c.title)}</div><div class="muted">Hãy nhớ cách đọc + Hán Việt + nghĩa.</div>`;
 }
 function backHtml(c){
   return `<div class="answer-title">Đáp án</div>
-    ${frontHtml(c)}
+    ${fullFrontHtml(c)}
     ${c.meaning_vi?`<div class="meaning">${esc(c.meaning_vi)}</div>`:''}
     ${c.example?`<pre class="raw">${esc(c.example)}</pre>`:''}
     ${app.state.settings.showRaw?`<details open><summary>Nội dung gốc đã trích từ PDF</summary><pre class="raw">${esc(c.raw)}</pre></details>`:''}`;
@@ -195,7 +304,9 @@ function rateCard(card, rate){
   const note=$('.noteBox'); if(note){ app.state.notes[card.id]=note.value; }
   const p=app.state.progress[card.id] || {ease:2.5, interval:0, reviewCount:0, correct:0, wrong:0};
   const t=now();
+  const wasNew = !p.lastReviewedAt;
   p.reviewCount=(p.reviewCount||0)+1;
+  if(wasNew && !p.firstLearnedAt) p.firstLearnedAt=t;
   p.lastReviewedAt=t; p.lastRating=rate;
   if(rate==='again'){
     p.wrong=(p.wrong||0)+1; p.interval=0; p.dueAt=t+minutes(10); p.ease=Math.max(1.3,(p.ease||2.5)-0.25);
@@ -210,6 +321,7 @@ function rateCard(card, rate){
   app.state.history.push({id:card.id, rate, at:t});
   if(app.state.history.length>2000) app.state.history=app.state.history.slice(-2000);
   saveState();
+  updateSidebarGoal();
   const s=app.currentStudy;
   if(s.index < s.deck.length-1){ s.index++; renderStudyCard(); }
   else { $('#studyArea').innerHTML = `<div class="panel"><h2>Xong phiên học</h2><p>Bạn đã hoàn thành ${s.deck.length} thẻ.</p><button class="primary" onclick="renderDashboard();activateNav('dashboard')">Về hôm nay</button></div>`; }
@@ -300,10 +412,18 @@ function answerQuiz(btn){
 }
 function rateSilently(card, rate){
   const p=app.state.progress[card.id] || {ease:2.5, interval:0, reviewCount:0, correct:0, wrong:0};
-  p.reviewCount=(p.reviewCount||0)+1; p.lastReviewedAt=now(); p.lastRating=rate;
-  if(rate==='again'){ p.wrong=(p.wrong||0)+1; p.interval=0; p.dueAt=now()+minutes(10); }
-  else { p.correct=(p.correct||0)+1; p.interval=(p.interval||0)===0?1:Math.round((p.interval||1)*(p.ease||2.5)); p.dueAt=now()+days(p.interval); }
-  app.state.progress[card.id]=p; saveState();
+  const t=now();
+  const wasNew = !p.lastReviewedAt;
+  p.reviewCount=(p.reviewCount||0)+1;
+  if(wasNew && !p.firstLearnedAt) p.firstLearnedAt=t;
+  p.lastReviewedAt=t; p.lastRating=rate;
+  if(rate==='again'){ p.wrong=(p.wrong||0)+1; p.interval=0; p.dueAt=t+minutes(10); }
+  else { p.correct=(p.correct||0)+1; p.interval=(p.interval||0)===0?1:Math.round((p.interval||1)*(p.ease||2.5)); p.dueAt=t+days(p.interval); }
+  app.state.progress[card.id]=p;
+  app.state.history.push({id:card.id, rate, at:t});
+  if(app.state.history.length>2000) app.state.history=app.state.history.slice(-2000);
+  saveState();
+  updateSidebarGoal();
 }
 
 function renderDrive(){
@@ -389,7 +509,14 @@ function renderSettings(){
     <section class="panel">
       <h2>Cài đặt</h2>
       <div class="form-grid">
-        <label>Số thẻ mới mỗi ngày<input id="newPerDay" type="number" min="1" max="150" value="${s.newPerDay||30}"></label>
+        <label>Mục tiêu thẻ mới/ngày<input id="newPerDay" type="number" min="1" max="150" value="${s.newPerDay||30}"></label>
+        <label>Số thẻ/phiên mặc định<input id="settingSessionSize" type="number" min="5" max="120" step="5" value="${s.sessionSize||25}"></label>
+        <label>Mặt trước flashcard mặc định<select id="settingFrontMode">
+          <option value="jp_to_vi">Nhìn Nhật → nhớ đọc/nghĩa</option>
+          <option value="vi_to_jp">Nhìn nghĩa → nhớ tiếng Nhật</option>
+          <option value="reading_to_jp">Nhìn cách đọc → nhớ Kanji/nghĩa</option>
+          <option value="kanji_to_reading">Nhìn Kanji → nhớ cách đọc</option>
+        </select></label>
         <label>Khoảng nghỉ Drive Mode / ms<input id="driveDelay" type="number" min="200" max="5000" step="100" value="${s.driveDelay||1200}"></label>
         <label>Hiện nội dung gốc PDF<select id="showRaw"><option value="true">Có</option><option value="false">Không</option></select></label>
       </div>
@@ -399,7 +526,17 @@ function renderSettings(){
     </section>
     <section class="panel"><h2>Thông tin dữ liệu</h2>${dataInfo()}</section>`;
   $('#showRaw').value=String(!!s.showRaw);
-  $('#saveSettings').onclick=()=>{ s.newPerDay=Number($('#newPerDay').value)||30; s.driveDelay=Number($('#driveDelay').value)||1200; s.showRaw=$('#showRaw').value==='true'; saveState(); alert('Đã lưu cài đặt'); };
+  $('#settingFrontMode').value=s.frontMode || 'jp_to_vi';
+  $('#saveSettings').onclick=()=>{
+    s.newPerDay=Number($('#newPerDay').value)||30;
+    s.sessionSize=Number($('#settingSessionSize').value)||25;
+    s.frontMode=$('#settingFrontMode').value || 'jp_to_vi';
+    s.driveDelay=Number($('#driveDelay').value)||1200;
+    s.showRaw=$('#showRaw').value==='true';
+    if($('#sessionSize')) $('#sessionSize').value=s.sessionSize;
+    if($('#frontMode')) $('#frontMode').value=s.frontMode;
+    saveState(); updateSidebarGoal(); alert('Đã lưu cài đặt');
+  };
   $('#resetBtn').onclick=()=>{ if(confirm('Xóa toàn bộ tiến độ học?')){ app.state=defaultState(); saveState(); renderSettings(); } };
   $('#importBtn').onclick=()=>$('#importFile').click();
   $('#importFile').onchange=importProgress;

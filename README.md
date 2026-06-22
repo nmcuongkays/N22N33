@@ -1,35 +1,27 @@
 # Nihongo Memory Coach
 
-Static HTML app for personal JLPT N3/N2 study: vocabulary, kanji, flashcard, SRS review, quiz, Drive Mode.
+App HTML/CSS/JS tĩnh để học N2/N3 theo Active Recall + SRS.
 
-## Cách chạy trên máy
+## Cách dùng nhanh
 
-Do `fetch('./data/study-data.json')`, nên nên chạy qua local server:
+1. Upload toàn bộ thư mục này lên GitHub repository.
+2. Vào **Settings → Pages**.
+3. Chọn **Deploy from a branch**, branch `main`, folder `/root`.
+4. Mở link GitHub Pages.
 
-```bash
-python -m http.server 8000
-```
+## Bản sửa hiện tại
 
-Mở: `http://localhost:8000`
+- Quiz không hiện đáp án trước khi chọn.
+- Thêm **Thiết lập phiên học** ở thanh bên:
+  - Kiểu phiên: Review / Thẻ mới / Mixed / Tất cả.
+  - Số thẻ/phiên.
+  - Mặt trước flashcard: Nhật → Việt, Việt → Nhật, Cách đọc → Nhật, Kanji → cách đọc.
+- Thêm **Mục tiêu hôm nay**:
+  - Tính số thẻ mới đã học lần đầu trong ngày.
+  - Hiện tiến độ dạng thanh.
+  - Nút “Học tiếp mục tiêu” chỉ lấy số thẻ còn thiếu trong ngày, tối đa bằng số thẻ/phiên.
+- Review không trừ vào mục tiêu thẻ mới, nhưng app vẫn khuyến nghị review trước.
 
-## Cách up lên GitHub Pages
+## Lưu ý
 
-1. Tạo repository mới, ví dụ `nihongo-memory-coach`.
-2. Upload toàn bộ file/folder này: `index.html`, `styles.css`, `app.js`, folder `data/`, `.nojekyll`.
-3. Vào **Settings → Pages**.
-4. Source: **Deploy from a branch**.
-5. Branch: `main`, folder: `/root`.
-6. Mở link GitHub Pages được tạo.
-
-## Lưu ý bản quyền
-
-Dữ liệu được trích từ các PDF do người dùng cung cấp để học cá nhân. Nếu tài liệu gốc có bản quyền, nên để repository ở chế độ riêng tư hoặc không công khai dữ liệu học.
-
-## Tiến độ học
-
-Tiến độ được lưu ở `localStorage` của trình duyệt. Muốn đổi máy, dùng nút **Xuất tiến độ** rồi sang máy mới chọn **Nhập tiến độ**.
-
-## Cập nhật 2026-06-22
-- Sửa Quiz theo kiểu active recall: không hiện cách đọc/Hán Việt/đáp án ở phần câu hỏi.
-- Thêm 4 kiểu quiz: Nhật→nghĩa, nghĩa→Nhật, Kanji→cách đọc, cách đọc→Nhật.
-- Đáp án và thông tin phụ chỉ hiện sau khi người học chọn.
+Tiến độ được lưu trong `localStorage` của trình duyệt. Nếu đổi máy/trình duyệt, hãy dùng nút **Xuất tiến độ** rồi nhập lại.
