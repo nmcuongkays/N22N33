@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nihongo Memory Coach</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <h1>Nihongo Memory Coach</h1>
+      <p>JLPT N3/N2 · Từ vựng · Kanji · SRS · Drive Mode</p>
+    </div>
+    <div class="header-actions">
+      <button id="themeBtn" class="ghost">🌙</button>
+      <button id="exportBtn" class="ghost">Xuất tiến độ</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <button class="nav active" data-view="dashboard">📊 Hôm nay</button>
+      <button class="nav" data-view="study">🧠 Học / Review</button>
+      <button class="nav" data-view="quiz">✅ Quiz</button>
+      <button class="nav" data-view="drive">🎧 Drive Mode</button>
+      <button class="nav" data-view="library">🔎 Danh sách</button>
+      <button class="nav" data-view="mistakes">⚠️ Từ yếu</button>
+      <button class="nav" data-view="settings">⚙️ Cài đặt</button>
+
+      <div class="filter-card">
+        <h3>Bộ lọc nhanh</h3>
+        <label>Cấp độ
+          <select id="levelFilter">
+            <option value="all">Tất cả</option>
+            <option value="N3">N3</option>
+            <option value="N2">N2</option>
+          </select>
+        </label>
+        <label>Loại
+          <select id="kindFilter">
+            <option value="all">Tất cả</option>
+            <option value="vocab">Từ vựng</option>
+            <option value="kanji">Kanji</option>
+          </select>
+        </label>
+        <label>Tìm kiếm
+          <input id="searchBox" placeholder="機械, きかい, máy..." />
+        </label>
+      </div>
+    </aside>
+
+    <section id="view" class="content" aria-live="polite">
+      <div class="loading">Đang tải dữ liệu...</div>
+    </section>
+  </main>
+
+  <template id="cardTemplate">
+    <article class="study-card">
+      <div class="card-meta"></div>
+      <div class="front"></div>
+      <button class="primary reveal">Hiện đáp án</button>
+      <div class="back hidden"></div>
+      <div class="rating hidden">
+        <button data-rate="again" class="danger">Again</button>
+        <button data-rate="hard">Hard</button>
+        <button data-rate="good" class="primary">Good</button>
+        <button data-rate="easy" class="success">Easy</button>
+      </div>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
